@@ -1,0 +1,20 @@
+[
+  {
+    "name": "w10-query-knowledge-base",
+    "description": "Search the Apex Auto Insurance knowledge base to answer customer questions about coverage types, policy exclusions, claims process, premiums, discounts, and Ohio state requirements. Use this tool when a customer asks any general insurance question that is not a specific policy lookup, claim filing, or quote request.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The customer's insurance question in plain language, e.g. 'Does my policy cover rental cars?' or 'What is comprehensive coverage?'"
+        },
+        "num_results": {
+          "type": "integer",
+          "description": "Number of knowledge base chunks to retrieve (optional, default 5, max 10)"
+        }
+      },
+      "required": ["question"]
+    }
+  }
+]
