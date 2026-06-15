@@ -1,6 +1,6 @@
 [
   {
-    "name": "w10-query-knowledge-base",
+    "name": "w16-query-knowledge-base",
     "description": "Search the Apex Auto Insurance knowledge base to answer customer questions about coverage types, policy exclusions, claims process, premiums, discounts, and Ohio state requirements. Use this tool when a customer asks any general insurance question that is not a specific policy lookup, claim filing, or quote request.",
     "inputSchema": {
       "type": "object",
