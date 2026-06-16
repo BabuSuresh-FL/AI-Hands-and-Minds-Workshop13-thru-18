@@ -6,20 +6,27 @@ RAG results with source citations.
 Matches pattern of existing apex-get-policy Lambda:
 - event fields passed directly as flat JSON from Gateway
 - returns {"statusCode": 200, "body": json.dumps(...)}
+
+FIXES APPLIED:
+  1. promptTemplate: question is no longer injected via string concatenation.
+     Bedrock's retrieve_and_generate uses input.text (the question) automatically
+     alongside $search_results$. Embedding the question in the template via
+     string concat is redundant and can corrupt the template if the question
+     contains special characters (quotes, newlines, $).
 """
 
 import json
 import boto3
 import os
 
-# ── Config ─────────────────────────────────────────────────────────────────
-REGION         = os.environ.get("REGION", "us-east-2")
-KB_ID          = os.environ.get("KB_ID", "")          # Set in Lambda env vars after KB is created
-MODEL_ARN      = os.environ.get("MODEL_ARN",
+# ── Config ──────────────────────────────────────────────────────────────────
+REGION      = os.environ.get("REGION", "us-east-2")
+KB_ID       = os.environ.get("KB_ID", "")          # Set in Lambda env vars
+MODEL_ARN   = os.environ.get("MODEL_ARN",
     "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0")
-MAX_RESULTS    = int(os.environ.get("MAX_RESULTS", "5"))
+MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "5"))
 
-bedrock_agent  = boto3.client("bedrock-agent-runtime", region_name=REGION)
+bedrock_agent = boto3.client("bedrock-agent-runtime", region_name=REGION)
 
 
 def handler(event, context):
@@ -38,7 +45,7 @@ def handler(event, context):
             "body": "{\"answer\": \"...\", \"sources\": [...], \"num_results\": 3}"
         }
     """
-    # ── Input validation ────────────────────────────────────────────────────
+    # ── Input validation ─────────────────────────────────────────────────────
     question = (event.get("question") or "").strip()
     if not question:
         return {
@@ -55,11 +62,11 @@ def handler(event, context):
     num_results = int(event.get("num_results", MAX_RESULTS))
     num_results = max(1, min(num_results, 10))   # clamp 1–10
 
-    # ── Call Bedrock Knowledge Base (RetrieveAndGenerate) ──────────────────
+    # ── Call Bedrock Knowledge Base (RetrieveAndGenerate) ────────────────────
     try:
         response = bedrock_agent.retrieve_and_generate(
             input={
-                "text": question
+                "text": question   # Bedrock uses this automatically in generation
             },
             retrieveAndGenerateConfiguration={
                 "type": "KNOWLEDGE_BASE",
@@ -73,6 +80,10 @@ def handler(event, context):
                     },
                     "generationConfiguration": {
                         "promptTemplate": {
+                            # FIX: question removed from template string.
+                            # Bedrock automatically includes input.text (the question)
+                            # when generating the response — no need to concatenate it
+                            # here, and doing so can corrupt the template with special chars.
                             "textPromptTemplate": (
                                 "You are Apex, a helpful auto insurance assistant for "
                                 "Apex Auto Insurance. Use only the retrieved context below "
@@ -80,7 +91,6 @@ def handler(event, context):
                                 "contain enough information, say so clearly and suggest the "
                                 "customer call 1-800-APEX-AUTO.\n\n"
                                 "Context:\n$search_results$\n\n"
-                                "Customer Question: " + question + "\n\n"
                                 "Answer clearly and concisely in plain language:"
                             )
                         },
@@ -95,19 +105,19 @@ def handler(event, context):
             }
         )
 
-        # ── Extract answer ──────────────────────────────────────────────────
+        # ── Extract answer ────────────────────────────────────────────────────
         answer = response.get("output", {}).get("text", "").strip()
 
-        # ── Extract citations / source chunks ──────────────────────────────
+        # ── Extract citations / source chunks ─────────────────────────────────
         sources = []
         citations = response.get("citations", [])
         for citation in citations:
             retrieved_refs = citation.get("retrievedReferences", [])
             for ref in retrieved_refs:
-                content   = ref.get("content", {}).get("text", "").strip()
-                location  = ref.get("location", {})
-                s3_loc    = location.get("s3Location", {})
-                uri       = s3_loc.get("uri", "unknown source")
+                content  = ref.get("content", {}).get("text", "").strip()
+                location = ref.get("location", {})
+                s3_loc   = location.get("s3Location", {})
+                uri      = s3_loc.get("uri", "unknown source")
 
                 # Extract just the filename from the S3 URI for readability
                 source_name = uri.split("/")[-1] if "/" in uri else uri
