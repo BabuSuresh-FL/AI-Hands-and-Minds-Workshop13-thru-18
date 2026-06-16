@@ -1,30 +1,34 @@
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "BedrockKnowledgeBaseRetrieve",
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:RetrieveAndGenerate",
-        "bedrock:Retrieve",
-        "bedrock:InvokeModel"
-      ],
-      "Resource": [
-        "arn:aws:bedrock:us-east-2:022079551771:knowledge-base/*",
-        "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
-      ]
-    },
-    {
-      "Sid": "S3KnowledgeBaseRead",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:ListBucket"
-      ],
-      "Resource": [
-        "arn:aws:s3:::w13-apex-kb-docs",
-        "arn:aws:s3:::w13-apex-kb-docs/*"
-      ]
-    }
-  ]
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "BedrockKnowledgeBaseRetrieve",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:RetrieveAndGenerate",
+                "bedrock:Retrieve",
+                "bedrock:InvokeModel",
+                "bedrock:GetInferenceProfile",
+                "bedrock:ListInferenceProfiles"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:us-east-2:022079551771:knowledge-base/*",
+                "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+                "arn:aws:bedrock:us-east-2:022079551771:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
+        },
+        {
+            "Sid": "S3KnowledgeBaseRead",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::w13-apex-kb-docs",
+                "arn:aws:s3:::w13-apex-kb-docs/*"
+            ]
+        }
+    ]
 }
