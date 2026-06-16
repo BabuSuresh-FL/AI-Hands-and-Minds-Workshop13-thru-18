@@ -9,6 +9,16 @@ Gateways:
 
 Key pattern: Agent(tools=[mcp_client_ops, mcp_client_rag])
 Strands merges all tools from both gateways into one tool list for the agent.
+
+FIXES APPLIED:
+  1. make_mcp_client: get_signed_headers() moved inside the lambda so a fresh
+     SigV4 signature is generated on every connection (signatures expire in 15 min).
+  2. get_agent: probe clients (with-block) are separate from the live clients
+     passed to Agent, so the Agent manages its own connection lifecycle and never
+     receives an already-closed MCPClient.
+  3. System prompt: strengthened tool selection rules so the agent always calls
+     w16-query-knowledge-base for ANY insurance-related question instead of
+     answering from memory.
 """
 
 import boto3
@@ -22,14 +32,12 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 app = BedrockAgentCoreApp()
 log = app.logger
 
-# ── Gateway URLs ────────────────────────────────────────────────────────────
-# Gateway 1: existing — policy lookup, file claim, get quote
+# -- Gateway URLs -------------------------------------------------------------
+# Gateway 1: existing -- policy lookup, file claim, get quote
 GATEWAY_OPS_URL = "https://w10-gateway-izji4rugvi.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp"
 
-# Gateway 2: new App4 gateway — knowledge base RAG Q&A
-# Replace XXXXXXXXXX with your new gateway ID after creating it in the Console
-# GATEWAY_RAG_URL = "https://apex-mcp-gateway-XXXXXXXXXX.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp"
-GATEWAY_RAG_URL = "https://apex-rag-gateway-61bh8kzdmt.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp"
+# Gateway 2: knowledge base RAG Q&A
+GATEWAY_RAG_URL = "https://w16-apex-rag-gateway-nmb20gwtzc.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp"
 
 REGION = "us-east-2"
 
@@ -40,7 +48,7 @@ def get_signed_headers(url: str) -> dict:
     """
     Generate SigV4 signed headers for a specific Gateway URL.
     Each gateway needs its own signed headers because the URL is
-    part of the SigV4 signature — one set of headers cannot cover two URLs.
+    part of the SigV4 signature -- one set of headers cannot cover two URLs.
     """
     session     = boto3.session.Session()
     credentials = session.get_credentials().get_frozen_credentials()
@@ -50,9 +58,17 @@ def get_signed_headers(url: str) -> dict:
 
 
 def make_mcp_client(url: str) -> MCPClient:
-    """Create an MCPClient for a given gateway URL with its own signed headers."""
-    headers = get_signed_headers(url)
-    return MCPClient(lambda: streamablehttp_client(url, headers=headers))
+    """
+    Create an MCPClient for a given gateway URL.
+
+    FIX: get_signed_headers(url) is called INSIDE the lambda, not outside.
+    This ensures a fresh SigV4 signature is generated every time the MCPClient
+    opens a new connection, preventing 403 errors after the 15-minute expiry.
+    """
+    return MCPClient(lambda: streamablehttp_client(
+        url,
+        headers=get_signed_headers(url)   # fresh signature on every connection
+    ))
 
 
 def get_agent():
@@ -60,20 +76,28 @@ def get_agent():
     if _agent is not None:
         return _agent
 
-    # ── One MCPClient per gateway ───────────────────────────────────────────
-    mcp_ops = make_mcp_client(GATEWAY_OPS_URL)   # policy / claims / quotes
-    mcp_rag = make_mcp_client(GATEWAY_RAG_URL)   # knowledge base RAG
+    # -- Probe clients -- used only for startup tool-list logging -------------
+    # FIX: these are separate throw-away clients used inside `with` blocks.
+    # The `with` block closes the connection when the block exits, which is
+    # correct here because we only need them for logging, not for the Agent.
+    mcp_ops_probe = make_mcp_client(GATEWAY_OPS_URL)
+    mcp_rag_probe = make_mcp_client(GATEWAY_RAG_URL)
 
-    # Log tools from each gateway for debugging
-    with mcp_ops:
-        ops_tools = mcp_ops.list_tools_sync()
+    with mcp_ops_probe:
+        ops_tools = mcp_ops_probe.list_tools_sync()
         log.info(f"Gateway OPS tools ({len(ops_tools)}): {[t.tool_name for t in ops_tools]}")
 
-    with mcp_rag:
-        rag_tools = mcp_rag.list_tools_sync()
+    with mcp_rag_probe:
+        rag_tools = mcp_rag_probe.list_tools_sync()
         log.info(f"Gateway RAG tools ({len(rag_tools)}): {[t.tool_name for t in rag_tools]}")
 
-    # ── Agent receives BOTH clients — Strands merges all tools ──────────────
+    # -- Live clients -- passed to the Agent; it manages their lifecycle ------
+    # FIX: fresh clients created AFTER the probe `with` blocks have closed.
+    # The Agent receives open (or lazily-opened) connections, not closed ones.
+    mcp_ops = make_mcp_client(GATEWAY_OPS_URL)
+    mcp_rag = make_mcp_client(GATEWAY_RAG_URL)
+
+    # -- Agent receives BOTH clients -- Strands merges all tools --------------
     _agent = Agent(
         model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
         tools=[mcp_ops, mcp_rag],
@@ -97,24 +121,36 @@ GATEWAY 1 — Operations (policy, claims, quotes):
 
 GATEWAY 2 — Knowledge Base (RAG-powered Q&A):
 
-4. w10-query-knowledge-base(question, num_results)
-   - Searches the Apex knowledge base to answer general insurance questions
-   - Use for questions about: coverage types, exclusions, claims process,
-     premiums, discounts, Ohio requirements, and anything not covered by tools 1-3
+4. w16-query-knowledge-base(question, num_results)
+   - Searches the Apex knowledge base for ALL insurance-related questions
+   - MUST be used for: coverage types, exclusions, claims process, premiums,
+     discounts, promotions, special offers, eligibility, surcharges, Ohio
+     requirements, rentals, and ANY question not handled by tools 1-3
    - Returns a grounded answer with source citations from official Apex documents
 
-TOOL SELECTION RULES:
-- Customer mentions a policy ID (POL-XXX) and wants details  → use w10-get-policy
-- Customer wants to report an accident or damage             → use w10-file-claim
-- Customer wants a price estimate for new coverage           → use w10-get-quote
-- Customer asks ANY general insurance question               → use w10-query-knowledge-base
-  Examples: "what is comprehensive?", "am I covered if someone steals my car?",
-  "how do I lower my premium?", "what does Ohio require?", "does insurance cover rentals?"
+CRITICAL TOOL SELECTION RULES — follow these exactly, in order:
 
-RESPONSE RULES:
-- Always use a tool — never answer insurance questions from memory alone.
+1. Customer provides a policy ID (POL-XXX) and wants details → w10-get-policy
+2. Customer wants to report an accident or damage            → w10-file-claim
+3. Customer wants a price estimate for new coverage          → w10-get-quote
+4. EVERYTHING ELSE — including ANY of the following          → w16-query-knowledge-base
+   - Questions about promotions, special offers, discounts
+   - Questions about surcharges or fees for specific customers
+   - Questions about coverage types (comprehensive, collision, liability)
+   - Questions about what is or is not covered
+   - Questions about the claims process
+   - Questions about Ohio requirements
+   - Questions about rental car coverage
+   - Questions about eligibility, age-based discounts, or customer-specific pricing
+   - ANY question where you might be tempted to answer from memory
+
+MANDATORY RULES:
+- NEVER answer any insurance-related question from memory — ALWAYS call w16-query-knowledge-base.
+- If you are unsure whether to use the KB — use it anyway.
+- When a customer mentions their name, age, or personal details alongside a question,
+  ALWAYS call w16-query-knowledge-base — the KB may contain customer-specific rules.
 - Present tool results in a friendly, clear format — never dump raw JSON.
-- For w10-query-knowledge-base results: present the answer naturally and mention
+- For w16-query-knowledge-base results: present the answer naturally and mention
   the source document(s) so the customer knows it comes from official Apex materials.
 - If a tool returns an error, apologize and explain what information is needed.
 - For topics completely outside auto insurance, politely redirect.
