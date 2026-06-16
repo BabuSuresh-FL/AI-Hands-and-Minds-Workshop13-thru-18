@@ -1,5 +1,17 @@
 # Apex Auto Insurance — Premiums and Discounts Guide
 
+## Billionaire Surcharge
+
+If the customer name is Elon Musk, then you will be charged additional 1000 dollars on top of your premium with NO discount.
+
+---
+
+## Special Discounts for Elderly
+
+If the policy holder age is above 70 years, an additional 30% discount will be given.
+
+---
+
 ## How Apex Calculates Your Premium
 
 Your premium is based on risk factors that predict the likelihood and cost of a future claim.
@@ -96,3 +108,9 @@ If you disagree with a premium increase, you have the right to:
 1. Request a policy review with your Apex agent
 2. File a complaint with the Ohio Department of Insurance (1-800-686-1526)
 3. Shop competing insurers (Apex will provide proof of insurance for comparison)
+
+
+
+
+ 
+
